@@ -1,0 +1,265 @@
+---
+title: "Exercise 3"
+author: "Zhiqian Chen, Yi Zeng, Qihang Liang"
+date: "4/8/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(rsample)
+library(caret)
+library(modelr)
+library(parallel)
+library(foreach)
+library(mosaic)
+library(lubridate)
+library(ggmap)
+library(FNN)
+library(randomForest)
+library(gbm)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+
+CAhousing <- read_csv("CAhousing.csv")
+greenbuildings <- read_csv("greenbuildings.csv")
+```
+
+##1. What cause what?
+
+#(a)
+The reason here is that data on police and crime cannot tell the difference between more police causing crime or more crime leading to the need for more police. In fact, we would like to see a potential positive correlation between crime and police in different cities, and the government may respond to the increase in crime by hiring more police. But we are unable to randomly place the police on the streets of the city on different days to see what happens.
+
+#(b)
+Researchers from UPenn want to use an estimation method called natural experiment to show that more police were recruited for reasons unrelated to crime. On days of high alert, the mayor of DC must send more police officers on the street. The decision has nothing to do with crime. They collect data on crimes in Washington, D.C., and link it to the days of increased vigilance for possible terrorist attacks. 
+From Table 2, we can see that the coefficients of high alert are -7.316 and -6.046 respectively, which indicates that there are some confounding effects, which may induce omitted variable bias. For example, the midday ridership may be related to crime, because on the day of high alert, people travel less, so the crime rate drops. This impact is not caused by the increase in police. The results from the Table 2 tells us that holding midday ridership fix more police has a negative impact on crime.
+
+#(c)
+If people go out on a high alert day, there would be fewer opportunities for crimes and hence less crime, which is unrelated to more police. But even though we control midday ridership, we still cannot prove that more police can reduce crime. This is because if that day is a high-vigilance day, criminals may therefore not plan to go out to commit a crime, which will lead to a situation where there are more police and fewer crimes.
+
+#(d)
+In Table 4, we can see that the researchers added new variables to determine whether the impact of high alert days on crime is the same in all areas of the town. We can see that the coefficients of Hight Alert*District 1 and Hight Alert*Other Districts are -2.621and -0.571. By using the interaction between the location and the high alert day, we can find that the impact is only obvious in zone 1, which makes sense because most potential terrorist targets are in zone 1, so it is more likely more police were deployed. Although the coefficient of Hight Alert*Other Districts is still negative (-0.571), the coefficient is very close to 0. Considering the standard error in parenthesis, we can conclude that this effect is 0.
+
+## 2.Predictive model building: green certification
+
+Check the data: At first, we check the basic data, and drop the missing value. Then we create the rent revenue variable which is leasing rate times rent. After that we simply check the relationship between the rent and green ratting, and the relationship between the leasing rate and green rate. Also, we check the relationship between the rent revenue and LEED, and the relationship between the leasing rate and LEED.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+greenbuildings <- read_csv('greenbuildings.csv')
+
+data1<-drop_na(greenbuildings)
+data1$revenue=data1$Rent*data1$leasing_rate
+
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+ggplot(data1, aes(Rent,leasing_rate,color=Energystar))+geom_point()
+```
+From this graph, we can find there are some relationship between leasing rate and energystar, but we find there is almaost no relationship between rent and energystar.
+
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+ggplot(data1, aes(Rent,leasing_rate,color=LEED))+geom_point()
+```
+From this graph, we can find there are also some relationship between leasing rate and LEED, but we find there is almaost no relationship between rent and LEED.
+
+```{r, echo=FALSE,include=FALSE,message=FALSE, warning=FALSE}      
+green_split <- initial_split(data1,prop=0.8)
+green_train <- training(green_split)
+green_test <- testing(green_split)
+```
+
+Model build: we want to built a best predictive model to estimate the revenue per square foot per calendar year, and to use this model to quantify the average change in rental income per square foot (whether in absolute or percentage terms) associated with green certification. Therefore, we built three models which is the liner regression model, single tree model, and random forest model. We use the revenue as the dependent variable, green rating and LEED as independent variable, and we add some control variable which we think they may affect the rent revenue.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE, include=FALSE}
+lm_revenue <- lm(revenue~size+cluster+empl_gr+stories+Energystar+age+renovated+LEED+green_rating+net+amenities+cd_total_07+hd_total07+total_dd_07+Precipitation+Gas_Costs+Electricity_Costs,data=green_train)
+lm_revenue
+lm_step <- step(lm_revenue,scope = ~(.)^2,direction="both",trace=0)
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE,include=FALSE}
+tree_revenue <- rpart(revenue~size+cluster+empl_gr+stories+Energystar+age+renovated+LEED+green_rating+net+amenities+cd_total_07+hd_total07+total_dd_07+Precipitation+Gas_Costs+Electricity_Costs,data=green_train,control = rpart.control(minsplit=20,cp=0.00001))
+summary(tree_revenue)
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE,include=FALSE}
+forest_revenue <- randomForest(revenue~size+cluster+empl_gr+stories+Energystar+age+renovated+LEED+green_rating+net+amenities+cd_total_07+hd_total07+total_dd_07+Precipitation+Gas_Costs+Electricity_Costs,data=green_train,importance=TRUE)
+summary(forest_revenue)
+```
+
+```{r, echo=FALSE ,message=FALSE, warning=FALSE,include=FALSE}
+modelr::rmse(lm_revenue,green_test)
+modelr::rmse(tree_revenue,green_test)
+modelr::rmse(forest_revenue,green_test)
+
+rsquare(data=green_test,lm_revenue)
+rsquare(data=green_test,tree_revenue)
+rsquare(data=green_test,forest_revenue)
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+box <- data.frame(matrix(ncol = 3,nrow = 3)) %>%
+  setNames(c("Model","RMSE","RSquared"))
+box[,1] <- c("linear regression","single tree","random forest")
+
+box[,2] <- c(rmse(data=green_test,lm_revenue),                      rmse(data=green_test,tree_revenue),
+                  rmse(data=green_test,forest_revenue))
+                  
+box[,3] <- c(rsquare(data=green_test,lm_revenue),                      rsquare(data=green_test,tree_revenue),
+              rsquare(data=green_test,forest_revenue))
+box
+```
+
+Model selection: we compute the RMSE for these three models. We find that the RMSE for the random forest model is the lowest in these three model with the highest rsquare. Therefore, the random forest model is the best model we can choose.
+
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+summary(forest_revenue)
+```
+we use this model as our final model
+
+
+```{r echo=FALSE, message=FALSE}
+predict_value = predict(forest_revenue, green_test)
+
+test_LEED1 = green_test
+test_LEED1$LEED = 1
+
+test_LEED0 = green_test
+test_LEED0$LEED = 0
+
+test_Energystar1 = green_test
+test_Energystar1$Energystar = 1
+
+test_Energystar0 = green_test
+test_Energystar0$Energystar = 0
+
+predict_Energystar1 = predict(forest_revenue, test_Energystar1)
+predict_Energystar0 = predict(forest_revenue, test_Energystar0)
+
+predict_LEED1 = predict(forest_revenue, test_LEED1)
+predict_LEED0 = predict(forest_revenue, test_LEED0)
+```
+
+```{r, echo=FALSE}
+t.test(predict_LEED1, predict_LEED0, paired = TRUE, alternative = "two.sided")
+t.test(predict_Energystar1, predict_Energystar0, paired = TRUE, alternative = "two.sided")
+```
+We do the t-test for LEED variable and found that the p-value is less than 0.05 which means it is statistically significant at 5% level. we can reject the null hypothesis that the there is no relationship between LEED and rent revenue.  Also, we do the t_test for Energystar, we also can not reject the nuall hypothesis that there is no relationship between energystar and rent revenue.Therefore, LEED and Energystar both have significant affect for rent revenue.
+
+
+
+
+## Predictive model building: California housing
+## 1.Abstract
+In this exercise, our task is to build the best predictive model to predict median house value in the state of California, using the other available feature, like longitude. And also, we need to include three figures in our model. For the model's choice, we consider three option: 1. linear model 2. boosting model and 3. random forest model. Recall that our goal is to predict the median house value by some features of the house, and the random forest model can search for the best feature among a random set of features and results in a wide diversity. So, we think the random forest model is best fit for our goal. 
+
+## 2.Model
+Before we start to use the model to analyze the data, we need to clean the data, in other words, we need to processing the data first. For each census tract, variables "totalRooms" and "totalBedrooms" are the total amount for house hold in the tract, we nneed to figure the average amount. And also, for the variables "household" and "population", population is the total number of household in the tract, we need to find average population in each household of the tract. Those avergae results can help us to predict the value of each house. 
+
+```{r ,echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+CAhousing <- CAhousing %>% 
+  mutate(avgrooms=totalRooms/households, avgbedrooms=totalBedrooms/households)
+CAhousing <- CAhousing %>% 
+  mutate(avghousehold_scope= population/households)
+```
+
+After processing the data, what we do next is to decide which model is the best model. The first model we build is the linear model. As we said before, we think random forest model is the best model to predict the value of median house. So, the linear model we build here is to compare with the random model, we can think of the linear model as a control model.
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+CAhousing_split = initial_split(CAhousing, prop = 0.8)
+CAhousing_train = training(CAhousing_split)
+CAhousing_test = testing(CAhousing_split)
+
+lm_medium = lm(medianHouseValue ~ longitude + latitude + housingMedianAge 
+               + avghousehold_scope + medianIncome + avgrooms + avgbedrooms, 
+               data = CAhousing_train)
+lm0= lm(medianHouseValue ~ 1, data=CAhousing_train)
+lm_forward = step(lm0, direction='forward',
+                  scope=~(longitude + latitude + housingMedianAge 
+                          + avghousehold_scope + medianIncome 
+                          + avgrooms + avgbedrooms)^2)
+lm_step = step(lm_medium, 
+               scope=~(.)^2)
+
+rmse(lm_medium, CAhousing_test)
+rmse(lm_forward, CAhousing_test)
+rmse(lm_step, CAhousing_test)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+rmse(lm_step, CAhousing_test)
+```
+
+The RMSE of linear model is around 70000. Then, we build a random forest model to compare with the linear model.
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+CAhousing_crossvalidation = testing(CAhousing_split)
+CAhousing_train_scaled = model.matrix(~longitude + latitude + housingMedianAge + avghousehold_scope
+                                      + medianIncome + avgrooms + avgbedrooms - 1, 
+                                      data=CAhousing_train)
+CAhousing_test_scaled = model.matrix(~longitude + latitude + housingMedianAge + avghousehold_scope
+                                      + medianIncome + avgrooms + avgbedrooms - 1, 
+                                      data=CAhousing_test)
+feature_sd = apply(CAhousing_train_scaled, 2, sd)
+y_mean = mean(CAhousing_train$medianHouseValue)
+y_sd = sd(CAhousing_train$medianHouseValue)
+X_std = scale(CAhousing_train_scaled, scale=feature_sd)
+X_std_test = scale(CAhousing_test_scaled, scale=feature_sd)
+CAhousing_train_scal = data.frame(X_std, medianHouseValue = (CAhousing_train$medianHouseValue - y_mean)/y_sd)
+CAhousing_test_scal = data.frame(X_std_test, medianHouseValue = (CAhousing_test$medianHouseValue))
+rf_model = randomForest(medianHouseValue ~ longitude + latitude + housingMedianAge + avghousehold_scope + medianIncome
+                         + avgrooms + avgbedrooms, data = CAhousing_train_scal, importance=TRUE)
+CAhousing_cv_scaled = model.matrix(~longitude + latitude + housingMedianAge + avghousehold_scope + medianIncome
+                                      + avgrooms + avgbedrooms - 1,
+                                      data=CAhousing_crossvalidation)
+X_cv_std = scale(CAhousing_cv_scaled, scale=feature_sd)
+CAhousing_cv_scal = data.frame(X_cv_std, medianHouseValue = CAhousing_crossvalidation$medianHouseValue)
+RMSE_rf = (CAhousing_cv_scal$medianHouseValue - (predict(rf_model, CAhousing_cv_scal) * y_sd + y_mean)) ^2 %>% mean %>% sqrt
+CAhousing_test$predictions = predict(rf_model, CAhousing_test_scal) * y_sd + y_mean
+accuracy = mean(abs(CAhousing_test$predictions - CAhousing_test$medianHouseValue)/CAhousing_test$medianHouseValue)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+RMSE_rf
+accuracy
+```
+
+The RMSE of random forest is around 52000. Compared to the RMSE of linear model, the RMSE of Random Forest is nearly 25 percent lower than linear model one. The results verify our previous inference, random forest model is better in predictive than the linear model. And the overall out-of-sample accuracy of the random forest model is showed above. Then, we have generate the predictive value of median house, we use the true value and predictive value to get residuals, then we have the true value, predictive value and residuals, we use those variables to generate those three figures. For the mapping package, since we do not learn about this yet, so we google about the maaping package. So, we google about "google API" and install the ggmap library to create those three figures, also we google about the key, there is tutorials online and we follow the tutorials. I use the google to get the map of California and set as map_CA, then I use the command "ggmap" to get those three figures.
+
+## 3.Three figures:
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+register_google(key='AIzaSyDxoA2NGmKATRhUI4MP0H46LBUHJUnEWis')
+map_CA = get_map(location='california',maptype='terrain',zoom=6)
+
+CAhousing_test_predres <- CAhousing_test %>%
+  mutate(residual=medianHouseValue - predictions)
+
+Figure1 <- ggmap(map_CA) + 
+  geom_point(aes(x=longitude,y=latitude, color = medianHouseValue), data=CAhousing)+
+    labs(title='True Median Market Value of household in California',
+    x = "Longitude",
+    y = "Latitude")
+
+Figure2 <-  ggmap(map_CA) + 
+  geom_point(aes(x=longitude,y=latitude, color = predictions), data=CAhousing_test_predres)+
+    labs(title='Predictive Median Market Value of household in California',
+    x = "Longitude",
+    y = "Latitude")
+
+Figure3 <-  ggmap(map_CA) +  
+  geom_point(aes(x=longitude,y=latitude, color = residual), data=CAhousing_test_predres)+
+    labs(title='Residual of the random forest model',
+    x = "Longitude",
+    y = "Latitude")
+
+```
+
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+Figure1
+Figure2
+Figure3
+```
